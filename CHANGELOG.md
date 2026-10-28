@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+- Backfill the hourly history into the long-term statistics of sensor.novafos_water_consumption itself, not only the separate 
+ovafos_water:water_consumption statistic. Home Assistant cannot backfill past states, so the entity's state graph still starts at setup.
+
 ## 0.2.2
 - Publish a GitHub Release for every version tag (workflow), so HACS shows real version numbers instead of commit hashes.
 

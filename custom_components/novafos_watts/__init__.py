@@ -6,11 +6,15 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-from homeassistant.components.recorder.statistics import async_add_external_statistics
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    async_import_statistics,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -124,16 +128,20 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
         self._import_statistics(device_id, dev, summary)
         return summary
 
-    def _import_statistics(self, device_id: str, dev: dict[str, Any], summary: Summary) -> None:
-        """Hourly history for the Energy dashboard; sums are cumulative since the first hour."""
-        if not summary.sums:
-            return
-        cutoff = parse_utc(dev["imported"]) - timedelta(days=3) if dev["imported"] else None
-        rows = [
+    @staticmethod
+    def _rows(summary: Summary, imported: str | None) -> list[StatisticData]:
+        """Hourly rows; sums are cumulative since the first hour. Re-sends 3 days of overlap."""
+        cutoff = parse_utc(imported) - timedelta(days=3) if imported else None
+        return [
             StatisticData(start=start, state=total, sum=total)
             for start, total in summary.sums
             if cutoff is None or start >= cutoff
         ]
+
+    def _import_statistics(self, device_id: str, dev: dict[str, Any], summary: Summary) -> None:
+        """Hourly history for the Energy dashboard, as a statistic of our own."""
+        if not summary.sums:
+            return
         metadata = StatisticMetaData(
             has_sum=True,
             name="Novafos Water consumption",
@@ -143,8 +151,37 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
             unit_class="volume",
             **_MEAN,
         )
-        async_add_external_statistics(self.hass, metadata, rows)
+        async_add_external_statistics(self.hass, metadata, self._rows(summary, dev["imported"]))
         dev["imported"] = _iso(summary.sums[-1][0])
+        self.import_entity_history(device_id)
+
+    def import_entity_history(self, device_id: str) -> bool:
+        """Backfill the consumption sensor's own long-term statistics.
+
+        Only statistics can be backfilled; Home Assistant has no way to write past
+        states, so the entity's state graph still starts when it was created.
+        The entity may not be registered yet during the first refresh, so setup
+        calls this again once the platform is loaded.
+        """
+        summary = (self.data or {}).get(device_id)
+        entity_id = er.async_get(self.hass).async_get_entity_id(
+            "sensor", DOMAIN, f"{device_id}_consumption"
+        )
+        if not summary or not summary.sums or not entity_id or self._state is None:
+            return False
+        dev = self._state[device_id]
+        metadata = StatisticMetaData(
+            has_sum=True,
+            name=None,
+            source="recorder",
+            statistic_id=entity_id,
+            unit_of_measurement=UnitOfVolume.CUBIC_METERS,
+            unit_class="volume",
+            **_MEAN,
+        )
+        async_import_statistics(self.hass, metadata, self._rows(summary, dev.get("entity_imported")))
+        dev["entity_imported"] = _iso(summary.sums[-1][0])
+        return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -152,6 +189,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Entities exist now, so the sensor's own statistics can be backfilled.
+    if any([coordinator.import_entity_history(d) for d in coordinator.device_ids]):
+        await coordinator._store.async_save(coordinator._state)
     return True
 
 

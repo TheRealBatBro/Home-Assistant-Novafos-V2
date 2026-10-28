@@ -54,6 +54,8 @@ The device is called "Novafos water", so the entity ids come out as
 | `sensor.novafos_water_data_until` | How far the meter data reaches (Novafos is typically about a day behind). |
 | `sensor.novafos_water_token_expires` | When the current access token stops working (diagnostic). |
 
+The hourly history is imported twice: as the separate statistic above and as the long-term statistics of `sensor.novafos_water_consumption`, so statistics graph cards and the Energy dashboard work with either. Home Assistant has no way to backfill past *states*, so the entity's normal history graph only starts when it is created.
+
 On the first run the integration fetches hourly data from 1 January of this
 year and imports it as statistics. After that it refetches the last two days on
 each poll, so late corrections are picked up. Only intervals marked `measured`
