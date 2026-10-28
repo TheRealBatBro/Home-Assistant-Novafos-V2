@@ -14,7 +14,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import WattsApi, WattsApiError, WattsAuthError
+from .api import WattsApi, WattsApiError, WattsAuthError, ci_first
 from .const import (
     CONF_DEVICE_IDS,
     CONF_REFRESH_TOKEN,
@@ -41,8 +41,9 @@ class DeviceData:
 
 def _parse_item(item: dict[str, Any]) -> tuple[datetime, float] | None:
     """Return (interval end, value) for one consumption record, or None."""
-    value = next((item[k] for k in VALUE_KEYS if isinstance(item.get(k), (int, float))), None)
-    stamp = next((item[k] for k in END_KEYS + START_KEYS if item.get(k)), None)
+    value = ci_first(item, *VALUE_KEYS)
+    value = value if isinstance(value, (int, float)) else None
+    stamp = ci_first(item, *END_KEYS, *START_KEYS)
     end = dt_util.parse_datetime(str(stamp)) if stamp else None
     if value is None or end is None or value < 0:  # the app treats -1 as "no data"
         return None

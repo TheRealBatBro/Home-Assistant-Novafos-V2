@@ -43,6 +43,7 @@ class NovafosWattsConfigFlow(ConfigFlow, domain=DOMAIN):
             api._on_new_refresh_token = keep
             try:
                 manual = [d.strip() for d in user_input[CONF_DEVICE_IDS].split(",") if d.strip()]
+                await api.async_user_id()
                 devices = manual or await api.async_water_devices()
             except WattsAuthError:
                 errors["base"] = "invalid_auth"

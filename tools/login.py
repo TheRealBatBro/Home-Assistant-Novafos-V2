@@ -14,6 +14,7 @@ import hashlib
 import json
 import secrets
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -44,12 +45,24 @@ def post_form(url: str, data: dict) -> dict:
         return json.load(resp)
 
 
+def ci(data: dict, *keys: str):
+    """First non-null value among keys, ignoring case (the API uses PascalCase)."""
+    lowered = {k.lower(): v for k, v in data.items()}
+    return next((lowered[k.lower()] for k in keys if lowered.get(k.lower()) is not None), None)
+
+
 def get_json(path: str, token: str):
     req = urllib.request.Request(
         API + path.lstrip("/"), headers={"Authorization": f"Bearer {token}"}
     )
-    with urllib.request.urlopen(req) as resp:
-        return json.load(resp)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as err:
+        print(f"!! {path} -> HTTP {err.code}")
+        print("   www-authenticate:", err.headers.get("WWW-Authenticate"))
+        print("   body:", err.read().decode(errors="replace")[:500])
+        return None
 
 
 def login() -> None:
@@ -105,15 +118,26 @@ def probe(refresh_token: str) -> None:
     )
     access = tokens["access_token"]
     claims = jwt_claims(tokens.get("id_token") or access)
+    access_claims = jwt_claims(access)
+    shown = ("iss", "aud", "scp", "sub", "oid", "tfp", "exp")
+    print("access token claims:", {k: access_claims.get(k) for k in shown})
+    print("id token claim names:", sorted(claims))
+    print("new refresh token: (saved in", "probe_refresh_token.txt)\n")
+    open("probe_refresh_token.txt", "w").write(tokens["refresh_token"])
+
+    # "Current user" call needs no user id, so it also tests the token itself.
+    me = get_json("users/api/v3/User", access)
+    print("== users/api/v3/User\n", json.dumps(me, indent=2)[:2000])
     user_id = claims.get("oid") or claims.get("sub")
-    print("new refresh token:", tokens["refresh_token"], "\n")
+    if isinstance(me, dict):
+        user_id = ci(me, "id", "userId") or user_id
+    print("using user id:", user_id)
+
     locations = get_json(f"installations/api/v3/users/{user_id}/locations", access)
     print("== locations\n", json.dumps(locations, indent=2)[:4000])
-    loc_ids = [
-        x.get("id") or x.get("locationId")
-        for x in (locations if isinstance(locations, list) else locations.get("locations", []))
-        if isinstance(x, dict)
-    ]
+    if isinstance(locations, dict):
+        locations = ci(locations, "locations", "items", "data") or []
+    loc_ids = [ci(x, "id", "locationId") for x in (locations or []) if isinstance(x, dict)]
     for loc in loc_ids:
         print(f"== provisioning location {loc}")
         print(json.dumps(get_json(f"provisioning/api/v1/locations/{loc}", access), indent=2)[:4000])

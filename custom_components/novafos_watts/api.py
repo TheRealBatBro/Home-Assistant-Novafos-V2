@@ -69,9 +69,6 @@ class WattsApi:
 
             self._access_token = body["access_token"]
             self._expires_at = time.time() + int(body.get("expires_in", 3600))
-            claims = jwt_claims(body.get("id_token") or self._access_token)
-            self.user_id = claims.get("oid") or claims.get("sub") or self.user_id
-
             # B2C rotates refresh tokens; losing the new one ends the session.
             new_refresh = body.get("refresh_token")
             if new_refresh and new_refresh != self._refresh_token:
@@ -99,22 +96,31 @@ class WattsApi:
         except aiohttp.ClientError as err:
             raise WattsApiError(str(err)) from err
 
+    async def async_user_id(self) -> str:
+        """Backend user id; it is not the token's sub/oid, so ask the API."""
+        if not self.user_id:
+            me = await self.get("users/api/v3/User")
+            self.user_id = str(ci_first(me, "id", "userId") or "") if isinstance(me, dict) else ""
+            if not self.user_id:
+                raise WattsApiError("users/api/v3/User returned no id")
+        return self.user_id
+
     async def async_water_devices(self) -> list[str]:
         """Find water device ids across all of the user's locations."""
-        await self._ensure_token()
+        user_id = await self.async_user_id()
         locations = _as_list(
-            await self.get(f"installations/api/v3/users/{self.user_id}/locations"),
+            await self.get(f"installations/api/v3/users/{user_id}/locations"),
             "locations",
         )
         found: list[str] = []
         for loc in locations:
-            loc_id = _first(loc, "id", "locationId")
+            loc_id = ci_first(loc, "id", "locationId")
             if not loc_id:
                 continue
             detail = await self.get(f"provisioning/api/v1/locations/{loc_id}")
             for dev in _walk_dicts(detail):
-                dev_id = _first(dev, "deviceId", "id")
-                kind = str(_first(dev, "utilityType", "type", "deviceType") or "")
+                dev_id = ci_first(dev, "deviceId", "id")
+                kind = str(ci_first(dev, "utilityType", "type", "deviceType") or "")
                 if dev_id and "water" in kind.lower() and dev_id not in found:
                     found.append(str(dev_id))
         return found
@@ -126,10 +132,12 @@ class WattsApi:
         )
 
 
-def _first(data: dict[str, Any], *keys: str) -> Any:
+def ci_first(data: dict[str, Any], *keys: str) -> Any:
+    """First non-null value among keys, ignoring case (the API uses PascalCase)."""
+    lowered = {k.lower(): v for k, v in data.items()}
     for key in keys:
-        if data.get(key) is not None:
-            return data[key]
+        if lowered.get(key.lower()) is not None:
+            return lowered[key.lower()]
     return None
 
 
@@ -138,8 +146,9 @@ def _as_list(data: Any, *wrapper_keys: str) -> list[dict[str, Any]]:
         return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
         for key in (*wrapper_keys, "items", "data", "values", "list"):
-            if isinstance(data.get(key), list):
-                return [x for x in data[key] if isinstance(x, dict)]
+            found = ci_first(data, key)
+            if isinstance(found, list):
+                return [x for x in found if isinstance(x, dict)]
     return []
 
 
