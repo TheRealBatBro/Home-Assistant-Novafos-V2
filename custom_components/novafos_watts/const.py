@@ -2,6 +2,7 @@
 from datetime import timedelta
 
 DOMAIN = "novafos_watts"
+STATISTICS_SOURCE = "novafos_water"
 
 TENANT = "wattsenergyassistant"
 POLICY = "B2C_1A_JITMigraion_signup_signin"

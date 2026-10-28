@@ -26,29 +26,39 @@ Open the printed URL, sign in, and copy the address of the final failed
 ## Verify first
 
 ```bash
-python tools/login.py probe <refresh_token>
+python tools/login.py probe
 ```
 
-This prints the raw locations, devices and `water/.../recent` JSON. Check that:
-
-- your water meter appears (note its device id),
-- the `recent` response has a start/end date and a value per interval,
-- the unit is m³ or litres (choose it in the config flow).
-
-If the field names differ, adjust `START_KEYS`, `END_KEYS` and `VALUE_KEYS` in
-`custom_components/novafos_watts/__init__.py`, or the device discovery in `api.py`.
+This reuses the saved token and prints your water meter and the raw consumption
+JSON. Confirmed against a real account: the API returns hourly intervals with
+short field names (`sd`, `ed`, `vol`, `mq`), and `vol` is in **m³** even though
+the device metadata says "liter". The `/recent` endpoint takes `?newerThan=`.
 
 ## Add the integration
 
 Settings > Devices & services > Add integration > "Novafos water (Watts On)".
 Paste the refresh token. Leave device IDs empty to auto-detect, or enter the id
-from the probe output.
+from the probe output. Keep the unit on m³ unless your numbers say otherwise.
 
 ## Sensors
 
-- **Water total** (`total_increasing`, m³): sum of intervals seen since setup. Usable in the Energy dashboard.
-- **Water today** (m³): consumption for the current local day.
-- **Last reading**: end time of the newest interval from Novafos.
+The device is called "Novafos water", so the entity ids come out as
+`sensor.novafos_water_<name>`.
+
+| Entity | Meaning |
+|---|---|
+| `sensor.novafos_water_consumption` | Cumulative total through the last imported hour (`total_increasing`). The hourly history behind it is the statistic `novafos_water:water_consumption` ("Novafos Water consumption"), ready for the Energy dashboard. |
+| `sensor.novafos_water_last_full_day` | Consumption on the latest complete day (attribute `date`). |
+| `sensor.novafos_water_last_7_days` | The last 7 complete days. |
+| `sensor.novafos_water_this_month` / `sensor.novafos_water_this_year` | Month-to-date and year-to-date. |
+| `sensor.novafos_water_data_until` | How far the meter data reaches (Novafos is typically about a day behind). |
+| `sensor.novafos_water_token_expires` | When the current access token stops working (diagnostic). |
+
+On the first run the integration fetches hourly data from 1 January of this
+year and imports it as statistics. After that it refetches the last two days on
+each poll, so late corrections are picked up. Only intervals marked `measured`
+are used. If the log warns that history is truncated, the API returned less
+than a year; month/year totals then cover only what it returned.
 
 ## Session lifetime
 

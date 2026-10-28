@@ -3,6 +3,7 @@
   "name": "Novafos water (Watts On)",
   "codeowners": [],
   "config_flow": true,
+  "dependencies": ["recorder"],
   "documentation": "https://watts.dk",
   "integration_type": "service",
   "iot_class": "cloud_polling",

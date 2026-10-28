@@ -6,6 +6,7 @@ import base64
 import json
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -105,14 +106,14 @@ class WattsApi:
                 raise WattsApiError("users/api/v3/User returned no id")
         return self.user_id
 
-    async def async_water_devices(self) -> list[str]:
-        """Find water device ids across all of the user's locations."""
+    async def async_water_devices(self) -> dict[str, str]:
+        """Find water devices across all locations, as {device_id: unit}."""
         user_id = await self.async_user_id()
         locations = _as_list(
             await self.get(f"installations/api/v3/users/{user_id}/locations"),
             "locations",
         )
-        found: list[str] = []
+        found: dict[str, str] = {}
         for loc in locations:
             loc_id = ci_first(loc, "id", "locationId")
             if not loc_id:
@@ -121,15 +122,22 @@ class WattsApi:
             for dev in _walk_dicts(detail):
                 dev_id = ci_first(dev, "deviceId", "id")
                 kind = str(ci_first(dev, "utilityType", "type", "deviceType") or "")
-                if dev_id and "water" in kind.lower() and dev_id not in found:
-                    found.append(str(dev_id))
+                if dev_id and "water" in kind.lower():
+                    found.setdefault(str(dev_id), str(ci_first(dev, "unit") or ""))
         return found
 
-    async def async_recent_consumption(self, device_id: str) -> list[dict[str, Any]]:
+    async def async_consumptions(self, device_id: str, start: datetime) -> list[dict[str, Any]]:
+        """Hourly intervals from `start` on (WaterConsumptionService, ?startDate=)."""
+        stamp = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         return _as_list(
-            await self.get(f"water/api/consumptions/{device_id}/recent"),
+            await self.get(f"water/api/consumptions/{device_id}", {"startDate": stamp}),
             "consumptions",
         )
+
+    @property
+    def expires_at(self) -> datetime | None:
+        """When the current access token stops working."""
+        return datetime.fromtimestamp(self._expires_at, timezone.utc) if self._access_token else None
 
 
 def ci_first(data: dict[str, Any], *keys: str) -> Any:

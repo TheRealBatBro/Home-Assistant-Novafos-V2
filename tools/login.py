@@ -3,15 +3,17 @@
 
 Usage:
     python login.py login            # interactive: prints a URL, you paste the redirect back
-    python login.py probe <refresh>  # dump raw JSON for locations/devices/water
+    python login.py probe [refresh]  # dump raw JSON for water; reuses the saved token
 
 The B2C app registration only allows the app's own msauth:// redirect, so the
 browser will end on a page it cannot open. Copy the full address of that
 failed redirect (it contains code=...) and paste it here.
 """
 import base64
+import datetime
 import hashlib
 import json
+import os
 import secrets
 import sys
 import urllib.error
@@ -27,6 +29,7 @@ SCOPE = (
 )
 BASE = f"https://{TENANT}.b2clogin.com/tfp/{TENANT}.onmicrosoft.com/{POLICY}/oauth2/v2.0"
 API = "https://p.watts-energy.dk/"
+TOKEN_FILE = "probe_refresh_token.txt"
 
 
 def b64url(raw: bytes) -> str:
@@ -51,17 +54,19 @@ def ci(data: dict, *keys: str):
     return next((lowered[k.lower()] for k in keys if lowered.get(k.lower()) is not None), None)
 
 
-def get_json(path: str, token: str):
-    req = urllib.request.Request(
-        API + path.lstrip("/"), headers={"Authorization": f"Bearer {token}"}
-    )
+def get_json(path: str, token: str, params: dict | None = None, quiet: bool = False):
+    url = API + path.lstrip("/")
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as err:
-        print(f"!! {path} -> HTTP {err.code}")
-        print("   www-authenticate:", err.headers.get("WWW-Authenticate"))
-        print("   body:", err.read().decode(errors="replace")[:500])
+        if not quiet:
+            print(f"!! {path} -> HTTP {err.code}")
+            print("   www-authenticate:", err.headers.get("WWW-Authenticate"))
+            print("   body:", err.read().decode(errors="replace")[:500])
         return None
 
 
@@ -100,8 +105,8 @@ def login() -> None:
         },
     )
     claims = jwt_claims(tokens.get("id_token") or tokens["access_token"])
-    print("\nRefresh token (paste into Home Assistant):\n")
-    print(tokens["refresh_token"])
+    open(TOKEN_FILE, "w").write(tokens["refresh_token"])
+    print(f"\nRefresh token saved to {TOKEN_FILE} (paste its contents into Home Assistant).")
     print("\nUser id claims:", {k: claims.get(k) for k in ("sub", "oid", "userId")})
     print("refresh_token_expires_in:", tokens.get("refresh_token_expires_in"))
 
@@ -123,7 +128,7 @@ def probe(refresh_token: str) -> None:
     print("access token claims:", {k: access_claims.get(k) for k in shown})
     print("id token claim names:", sorted(claims))
     print("new refresh token: (saved in", "probe_refresh_token.txt)\n")
-    open("probe_refresh_token.txt", "w").write(tokens["refresh_token"])
+    open(TOKEN_FILE, "w").write(tokens["refresh_token"])
 
     # "Current user" call needs no user id, so it also tests the token itself.
     me = get_json("users/api/v3/User", access)
@@ -134,24 +139,47 @@ def probe(refresh_token: str) -> None:
     print("using user id:", user_id)
 
     locations = get_json(f"installations/api/v3/users/{user_id}/locations", access)
-    print("== locations\n", json.dumps(locations, indent=2)[:4000])
     if isinstance(locations, dict):
         locations = ci(locations, "locations", "items", "data") or []
     loc_ids = [ci(x, "id", "locationId") for x in (locations or []) if isinstance(x, dict)]
+
+    # Print only water devices; the full payload carries addresses we don't need.
+    water: dict[str, str] = {}
     for loc in loc_ids:
-        print(f"== provisioning location {loc}")
-        print(json.dumps(get_json(f"provisioning/api/v1/locations/{loc}", access), indent=2)[:4000])
-    device = input("\nWater deviceId to probe (blank to stop): ").strip()
-    if device:
-        for path in (f"water/api/consumptions/{device}/recent", f"water/api/forecasts/{device}/recent"):
-            print("==", path)
-            print(json.dumps(get_json(path, access), indent=2)[:4000])
+        detail = get_json(f"provisioning/api/v1/locations/{loc}", access) or {}
+        for dev in ci(detail, "devices") or []:
+            if "water" in str(ci(dev, "utilityType") or "").lower():
+                water[str(ci(dev, "deviceId", "id"))] = str(ci(dev, "unit"))
+    print("== water devices (id: unit):", water)
+
+
+    # Parameter names come from the app's Retrofit interface (WaterConsumptionService):
+    #   /recent endpoints take ?newerThan=<Instant>, the others ?startDate=<Instant>.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    since = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for device in water:
+        for path, params in (
+            (f"water/api/consumptions/{device}/recent", {"newerThan": since}),
+            (f"water/api/forecasts/{device}/recent", {"newerThan": since}),
+            (f"water/api/consumptions/{device}", {"startDate": since}),
+        ):
+            print("==", path, params)
+            data = get_json(path, access, params)
+            text = json.dumps(data, indent=2)
+            print(text[:3000] + ("\n... (truncated)" if len(text) > 3000 else ""))
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "login":
         login()
-    elif len(sys.argv) == 3 and sys.argv[1] == "probe":
-        probe(sys.argv[2])
+    elif sys.argv[1:2] == ["probe"] and len(sys.argv) <= 3:
+        # No argument: reuse the token saved by the last login/probe run.
+        if len(sys.argv) == 3:
+            probe(sys.argv[2].strip("<>"))
+        elif os.path.exists(TOKEN_FILE):
+            probe(open(TOKEN_FILE).read().strip())
+        else:
+            sys.exit(f"No {TOKEN_FILE} here. Run 'login' first, or pass a token.")
     else:
+        print(f"Unrecognised arguments: {sys.argv[1:]}\n")
         sys.exit(__doc__)
