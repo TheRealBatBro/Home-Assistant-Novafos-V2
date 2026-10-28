@@ -47,7 +47,7 @@ The device is called "Novafos water", so the entity ids come out as
 
 | Entity | Meaning |
 |---|---|
-| `sensor.novafos_water_consumption` | Cumulative total through the last imported hour (`total_increasing`). The hourly history behind it is the statistic `novafos_water:water_consumption` ("Novafos Water consumption"), ready for the Energy dashboard. |
+| `sensor.novafos_water_consumption` | Cumulative total through the last imported hour (`total_increasing`). The hourly history behind it is the statistic `novafos_watts:water_consumption` ("Novafos water consumption (Watts On)"), ready for the Energy dashboard. |
 | `sensor.novafos_water_last_full_day` | Consumption on the latest complete day (attribute `date`). |
 | `sensor.novafos_water_last_7_days` | The last 7 complete days. |
 | `sensor.novafos_water_this_month` / `sensor.novafos_water_this_year` | Month-to-date and year-to-date. |
@@ -56,7 +56,9 @@ The device is called "Novafos water", so the entity ids come out as
 
 The consumption sensor also carries two attributes for templates and cards (for example ApexCharts): `daily` (the last 30 local days, keyed by date) and `hourly` (the last 48 hours, keyed by local start time), both in m³. They are kept out of the recorder database, so they only ever show the current values.
 
-The hourly history is imported twice: as the separate statistic above and as the long-term statistics of `sensor.novafos_water_consumption`, so statistics graph cards and the Energy dashboard work with either. Home Assistant has no way to backfill past *states*, so the entity's normal history graph only starts when it is created.
+The hour-by-hour history is imported only into that external statistic. Use it for the Energy dashboard and statistics graph cards. The sensor's own long-term statistics are compiled by the recorder from its state, so they start when the sensor was created and follow the data as it arrives (about a day late), not the hour it was used. Home Assistant has no way to backfill past *states* either.
+
+Versions before 0.5.0 wrote the external statistic as `novafos_water:water_consumption`, the id the older, separate Novafos integration (domain `novafos_water`) also uses. If a dashboard should show this integration's data, switch it to `novafos_watts:water_consumption`.
 
 On the first run the integration fetches hourly data from 1 January of this
 year and imports it as statistics. After that it refetches the last two days on

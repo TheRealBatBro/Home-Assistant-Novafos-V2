@@ -2,7 +2,9 @@
 from datetime import timedelta
 
 DOMAIN = "novafos_watts"
-STATISTICS_SOURCE = "novafos_water"
+# External statistics use our own domain; "novafos_water" belongs to the older
+# Home-Assistant-Novafos integration, which writes novafos_water:water_consumption.
+STATISTICS_SOURCE = DOMAIN
 
 TENANT = "wattsenergyassistant"
 POLICY = "B2C_1A_JITMigraion_signup_signin"

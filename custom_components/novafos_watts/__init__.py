@@ -5,10 +5,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     async_import_statistics,
+    statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
@@ -21,7 +23,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import WattsApi, WattsApiError, WattsAuthError, ci_first
-from .calc import Summary, parse_utc, summarize
+from .calc import Summary, parse_utc, rebase_entity_statistics, summarize
 from .const import (
     CONF_DEVICE_IDS,
     CONF_REFRESH_TOKEN,
@@ -142,34 +144,84 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
         """Hourly history for the Energy dashboard, as a statistic of our own."""
         if not summary.sums:
             return
+        statistic_id = self.statistic_id(device_id)
+        if dev.get("statistic_id") != statistic_id:
+            # New id (0.5.0 moved off novafos_water:, which the older integration
+            # owns): import the whole series, not just the overlap.
+            dev["imported"] = None
+            dev["statistic_id"] = statistic_id
         metadata = StatisticMetaData(
             has_sum=True,
-            name="Novafos Water consumption",
+            name="Novafos water consumption (Watts On)",
             source=STATISTICS_SOURCE,
-            statistic_id=self.statistic_id(device_id),
+            statistic_id=statistic_id,
             unit_of_measurement=UnitOfVolume.CUBIC_METERS,
             unit_class="volume",
             **_MEAN,
         )
         async_add_external_statistics(self.hass, metadata, self._rows(summary, dev["imported"]))
         dev["imported"] = _iso(summary.sums[-1][0])
-        self.import_entity_history(device_id)
 
-    def import_entity_history(self, device_id: str) -> bool:
-        """Backfill the consumption sensor's own long-term statistics.
+    async def async_repair_entity_statistics(self, device_id: str) -> bool:
+        """Once, undo the 0.3.0-0.4.1 backfill of the consumption sensor's statistics.
 
-        Only statistics can be backfilled; Home Assistant has no way to write past
-        states, so the entity's state graph still starts when it was created.
-        The entity may not be registered yet during the first refresh, so setup
-        calls this again once the platform is loaded.
+        The recorder owns those statistics now (the sensor is total_increasing).
+        Returns True when the stored state changed and needs saving.
         """
+        assert self._state is not None
+        dev = self._state.get(device_id, {})
         summary = (self.data or {}).get(device_id)
+        if "entity_imported" not in dev or summary is None:
+            return False
         entity_id = er.async_get(self.hass).async_get_entity_id(
             "sensor", DOMAIN, f"{device_id}_consumption"
         )
-        if not summary or not summary.sums or not entity_id or self._state is None:
-            return False
-        dev = self._state[device_id]
+        if entity_id:
+            await self._rebase_entity(entity_id, summary)
+        del dev["entity_imported"]
+        return True
+
+    async def _rebase_entity(self, entity_id: str, summary: Summary) -> None:
+        recorder = get_instance(self.hass)
+
+        async def rows(period: str) -> list[dict[str, Any]]:
+            stats = await recorder.async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                datetime(2000, 1, 1, tzinfo=dt_util.UTC),
+                None,
+                {entity_id},
+                period,
+                None,
+                {"state", "sum"},
+            )
+            return [r for r in stats.get(entity_id, []) if r.get("sum") is not None]
+
+        hours = await rows("hour")
+        if not hours:
+            return
+        short = await rows("5minute")
+        plan = rebase_entity_statistics(
+            summary.sums,
+            [dt_util.utc_from_timestamp(r["start"]) for r in hours],
+            [
+                (dt_util.utc_from_timestamp(r["start"]), float(r["state"]), float(r["sum"]))
+                for r in short
+                if r.get("state") is not None
+            ],
+        )
+        if plan is None:
+            # Only imported rows and no recorder series to join them to: the
+            # recorder's first compile would start at 0 below them, so drop them.
+            recorder.async_clear_statistics([entity_id])
+            _LOGGER.info("Cleared imported statistics of %s", entity_id)
+            return
+        # Queued in this order: the adjustment also shifts the hourly rows, which
+        # the import then overwrites with their final sums.
+        if abs(plan.offset) > 1e-9:
+            recorder.async_adjust_statistics(
+                entity_id, plan.frame_start, plan.offset, UnitOfVolume.CUBIC_METERS
+            )
         metadata = StatisticMetaData(
             has_sum=True,
             name=None,
@@ -179,9 +231,18 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
             unit_class="volume",
             **_MEAN,
         )
-        async_import_statistics(self.hass, metadata, self._rows(summary, dev.get("entity_imported")))
-        dev["entity_imported"] = _iso(summary.sums[-1][0])
-        return True
+        async_import_statistics(
+            self.hass,
+            metadata,
+            [StatisticData(start=start, state=total, sum=total) for start, total in plan.rows],
+        )
+        _LOGGER.info(
+            "Repaired statistics of %s: %s hourly rows, recorder series from %s moved by %s",
+            entity_id,
+            len(plan.rows),
+            plan.frame_start,
+            plan.offset,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -189,8 +250,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    # Entities exist now, so the sensor's own statistics can be backfilled.
-    if any([coordinator.import_entity_history(d) for d in coordinator.device_ids]):
+    # Entities exist now, so the sensor's statistic_id can be looked up.
+    if any([await coordinator.async_repair_entity_statistics(d) for d in coordinator.device_ids]):
         await coordinator._store.async_save(coordinator._state)
     return True
 
