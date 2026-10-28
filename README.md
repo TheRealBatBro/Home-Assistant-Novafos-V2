@@ -54,6 +54,8 @@ The device is called "Novafos water", so the entity ids come out as
 | `sensor.novafos_water_data_until` | How far the meter data reaches (Novafos is typically about a day behind). |
 | `sensor.novafos_water_token_expires` | When the current access token stops working (diagnostic). |
 
+The consumption sensor also carries two attributes for templates and cards (for example ApexCharts): `daily` (the last 30 local days, keyed by date) and `hourly` (the last 48 hours, keyed by local start time), both in m³. They are kept out of the recorder database, so they only ever show the current values.
+
 The hourly history is imported twice: as the separate statistic above and as the long-term statistics of `sensor.novafos_water_consumption`, so statistics graph cards and the Energy dashboard work with either. Home Assistant has no way to backfill past *states*, so the entity's normal history graph only starts when it is created.
 
 On the first run the integration fetches hourly data from 1 January of this

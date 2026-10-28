@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 
 
+RECENT_HOURS = 48
+
+
 @dataclass
 class Summary:
     consumption: float = 0.0
@@ -14,6 +17,8 @@ class Summary:
     this_month: float = 0.0
     this_year: float = 0.0
     data_until: datetime | None = None
+    daily: dict[date, float] = field(default_factory=dict)  # local date -> volume
+    recent_hours: list[tuple[datetime, float]] = field(default_factory=list)  # newest 48 h
     # (interval start, cumulative sum through the end of that hour), oldest first
     sums: list[tuple[datetime, float]] = field(default_factory=list)
 
@@ -52,5 +57,7 @@ def summarize(hourly: dict[str, float], now: datetime, tz: tzinfo, factor: float
         ),
         this_year=sum(v for d, v in daily.items() if d.year == local_now.year),
         data_until=data_until,
+        daily=daily,
+        recent_hours=series[-RECENT_HOURS:],
         sums=sums,
     )

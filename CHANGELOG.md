@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.0
+- `sensor.novafos_water_consumption` now has `daily` (last 30 local days) and `hourly` (last 48 hours) attributes in m³, for templates and cards. They are excluded from the recorder database.
+
 ## 0.3.0
 - Backfill the hourly history into the long-term statistics of sensor.novafos_water_consumption itself, not only the separate 
 ovafos_water:water_consumption statistic. Home Assistant cannot backfill past states, so the entity's state graph still starts at setup.

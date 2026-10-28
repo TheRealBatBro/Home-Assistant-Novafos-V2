@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import WattsCoordinator
 from .calc import Summary
@@ -39,12 +40,28 @@ def _volume(**kwargs: Any) -> dict[str, Any]:
     }
 
 
+HISTORY_DAYS = 30  # attributes over 16 KB are not stored by the recorder; this stays ~3 KB
+
+
+def _history_attributes(summary: Summary) -> dict[str, Any]:
+    """Recent daily (local date) and hourly (local start time) volumes in m³."""
+    days = sorted(summary.daily)[-HISTORY_DAYS:]
+    return {
+        "daily": {d.isoformat(): round(summary.daily[d], 4) for d in days},
+        "hourly": {
+            dt_util.as_local(start).isoformat(): round(value, 4)
+            for start, value in summary.recent_hours
+        },
+    }
+
+
 DESCRIPTIONS: tuple[WattsSensorDescription, ...] = (
     WattsSensorDescription(
         key="consumption",
         name="Consumption",
         **_volume(state_class=SensorStateClass.TOTAL_INCREASING),
         value_fn=lambda s, c: s.consumption,
+        attrs_fn=_history_attributes,
     ),
     WattsSensorDescription(
         key="last_full_day",
@@ -100,6 +117,8 @@ async def async_setup_entry(
 
 class WattsSensor(CoordinatorEntity[WattsCoordinator], SensorEntity):
     _attr_has_entity_name = True
+    # Keep the bulky history out of the database; it is rebuilt on every update.
+    _unrecorded_attributes = frozenset({"daily", "hourly"})
     entity_description: WattsSensorDescription
 
     def __init__(
