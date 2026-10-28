@@ -28,5 +28,11 @@
       "already_configured": "This Watts account is already configured",
       "reauth_successful": "Logged in again. The integration is reloading."
     }
+  },
+  "issues": {
+    "legacy_statistic_id": {
+      "title": "Energy dashboard uses the old Novafos statistic",
+      "description": "Since version 0.5.0 this integration writes its hourly water history to `{new}`. Your Energy dashboard still uses `{old}`, which no longer updates. Open Settings > Dashboards > Energy and pick `{new}` for water consumption. Afterwards you can delete `{old}` in Developer tools > Statistics. This message goes away on the next restart once the old statistic is no longer used."
+    }
   }
 }

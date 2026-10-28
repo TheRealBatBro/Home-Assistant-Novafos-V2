@@ -58,7 +58,7 @@ The consumption sensor also carries two attributes for templates and cards (for 
 
 The hour-by-hour history is imported only into that external statistic. Use it for the Energy dashboard and statistics graph cards. The sensor's own long-term statistics are compiled by the recorder from its state, so they start when the sensor was created and follow the data as it arrives (about a day late), not the hour it was used. Home Assistant has no way to backfill past *states* either.
 
-Versions before 0.5.0 wrote the external statistic as `novafos_water:water_consumption`, the id the older, separate Novafos integration (domain `novafos_water`) also uses. If a dashboard should show this integration's data, switch it to `novafos_watts:water_consumption`.
+Versions before 0.5.0 wrote the external statistic as `novafos_water:water_consumption`, the id the older, separate Novafos integration (domain `novafos_water`) also uses. If a dashboard should show this integration's data, switch it to `novafos_watts:water_consumption`. When the Energy dashboard still uses the old id and the older integration isn't set up, Home Assistant shows a repair issue saying so.
 
 On the first run the integration fetches hourly data from 1 January of this
 year and imports it as statistics. After that it refetches the last two days on

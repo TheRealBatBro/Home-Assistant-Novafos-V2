@@ -13,6 +13,9 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
@@ -29,6 +32,7 @@ ENTITY = "sensor.novafos_water_consumption"
 H = timedelta(hours=1)
 M5 = timedelta(minutes=5)
 EPS = 1e-6
+LEGACY_ISSUE = (DOMAIN, "legacy_statistic_id")
 
 
 def _entry() -> MockConfigEntry:
@@ -47,10 +51,10 @@ def _true_sums() -> list[tuple[datetime, float]]:
     return [(h, HOURLY_VOLUME * (i + 1)) for i, h in enumerate(fake_hours())]
 
 
-def _meta() -> StatisticMetaData:
+def _meta(unit="m³") -> StatisticMetaData:
     return StatisticMetaData(
         has_sum=True, name=None, source="recorder", statistic_id=ENTITY,
-        unit_of_measurement="m³", unit_class="volume", mean_type=StatisticMeanType.NONE,
+        unit_of_measurement=unit, unit_class="volume", mean_type=StatisticMeanType.NONE,
     )
 
 
@@ -84,11 +88,14 @@ def _stored(hass_storage, entry, **extra):
     }
 
 
-def _register_sensor(hass, entry):
-    er.async_get(hass).async_get_or_create(
+def _register_sensor(hass, entry, unit=None):
+    reg = er.async_get(hass)
+    reg.async_get_or_create(
         "sensor", DOMAIN, f"{DEVICE}_consumption",
         suggested_object_id="novafos_water_consumption", config_entry=entry,
     )
+    if unit:  # the user picked another display unit in the entity settings
+        reg.async_update_entity_options(ENTITY, "sensor", {"unit_of_measurement": unit})
 
 
 async def _setup(hass, entry):
@@ -124,9 +131,9 @@ async def test_new_statistic_id_gets_the_whole_series(hass, hass_storage, mock_a
     assert await _rows(hass, SHARED_ID) == []
 
 
-async def _write_corrupted_history(hass):
+async def _write_corrupted_history(hass, unit="m³", scale=1.0):
     """What 0.3.0-0.4.1 left: the recorder's series from 0, partly overwritten by imports."""
-    true = _true_sums()
+    true = [(h, v * scale) for h, v in _true_sums()]
 
     def state(t):  # the sensor showed everything up to a day before t
         return max([v for h, v in true if h + H <= t - timedelta(hours=24)], default=0.0)
@@ -136,25 +143,27 @@ async def _write_corrupted_history(hass):
     base = state(frame)
     short = [frame + i * M5 for i in range(int((end - frame) / M5))]
     get_instance(hass).async_import_statistics(
-        _meta(),
+        _meta(unit),
         [StatisticData(start=t, state=state(t + M5), sum=state(t + M5) - base) for t in short],
         StatisticsShortTerm,
     )
-    async_import_statistics(hass, _meta(), [
+    async_import_statistics(hass, _meta(unit), [
         StatisticData(start=h, state=state(h + H), sum=state(h + H) - base)
         for h in (frame + i * H for i in range(40))
     ])
-    async_import_statistics(hass, _meta(), [StatisticData(start=h, state=v, sum=v) for h, v in true])
+    async_import_statistics(hass, _meta(unit), [StatisticData(start=h, state=v, sum=v) for h, v in true])
     assert min(_changes(await _rows(hass, ENTITY))) < 0  # the reported bug
 
 
-async def test_repair_makes_the_sensor_series_continuous(hass, hass_storage, mock_api):
+@pytest.mark.parametrize(("unit", "scale"), [("m³", 1.0), ("L", 1000.0)])
+async def test_repair_makes_the_sensor_series_continuous(hass, hass_storage, mock_api, unit, scale):
     entry = _entry()
     _stored(hass_storage, entry, statistic_id=STAT_ID, entity_imported=_iso(fake_hours()[-1]))
     entry.add_to_hass(hass)
-    _register_sensor(hass, entry)
-    await _write_corrupted_history(hass)
+    _register_sensor(hass, entry, None if unit == "m³" else unit)
+    await _write_corrupted_history(hass, unit, scale)
     await _setup(hass, entry)
+    assert hass.states.get(ENTITY).attributes["unit_of_measurement"] == unit
 
     hourly = await _rows(hass, ENTITY)
     assert min(_changes(hourly)) >= -EPS
@@ -202,3 +211,34 @@ async def test_repair_runs_once(hass, hass_storage, mock_api):
 
     await _setup(hass, entry)
     assert await _rows(hass, ENTITY) == before
+
+
+async def _energy_uses(hass, stat_id):
+    from homeassistant.components.energy.data import async_get_manager
+
+    assert await async_setup_component(hass, "energy", {})
+    manager = await async_get_manager(hass)
+    await manager.async_update({"energy_sources": [{
+        "type": "water", "stat_energy_from": stat_id, "stat_cost": None,
+        "entity_energy_price": None, "number_energy_price": None,
+    }]})
+
+
+async def test_energy_dashboard_on_the_old_id_raises_an_issue(hass, mock_api):
+    await _energy_uses(hass, SHARED_ID)
+    await _setup(hass, _entry())
+    issue = ir.async_get(hass).async_get_issue(*LEGACY_ISSUE)
+    assert issue and issue.translation_placeholders["new"] == STAT_ID
+
+
+async def test_no_issue_on_the_new_id(hass, mock_api):
+    await _energy_uses(hass, STAT_ID)
+    await _setup(hass, _entry())
+    assert ir.async_get(hass).async_get_issue(*LEGACY_ISSUE) is None
+
+
+async def test_no_issue_when_the_older_integration_owns_the_old_id(hass, mock_api):
+    MockConfigEntry(domain="novafos_water").add_to_hass(hass)
+    await _energy_uses(hass, SHARED_ID)
+    await _setup(hass, _entry())
+    assert ir.async_get(hass).async_get_issue(*LEGACY_ISSUE) is None

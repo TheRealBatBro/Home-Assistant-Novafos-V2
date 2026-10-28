@@ -10,6 +10,7 @@ from homeassistant.components.recorder.models import StatisticData, StatisticMet
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     async_import_statistics,
+    get_metadata,
     statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -17,10 +18,12 @@ from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import VolumeConverter
 
 from .api import WattsApi, WattsApiError, WattsAuthError, ci_first
 from .calc import Summary, parse_utc, rebase_entity_statistics, summarize
@@ -29,6 +32,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_UNIT,
     DOMAIN,
+    LEGACY_STATISTICS_SOURCE,
     SCAN_INTERVAL,
     STATISTICS_SOURCE,
     UNIT_LITER,
@@ -183,6 +187,14 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
 
     async def _rebase_entity(self, entity_id: str, summary: Summary) -> None:
         recorder = get_instance(self.hass)
+        meta = await recorder.async_add_executor_job(
+            lambda: get_metadata(self.hass, statistic_ids={entity_id})
+        )
+        if entity_id not in meta:
+            return
+        # The user may have changed the sensor's unit (say to litres); the
+        # statistics are then stored in that unit. Work in m³ and write back in it.
+        unit = meta[entity_id][1]["unit_of_measurement"] or UnitOfVolume.CUBIC_METERS
 
         async def rows(period: str) -> list[dict[str, Any]]:
             stats = await recorder.async_add_executor_job(
@@ -192,7 +204,7 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
                 None,
                 {entity_id},
                 period,
-                None,
+                {"volume": UnitOfVolume.CUBIC_METERS},
                 {"state", "sum"},
             )
             return [r for r in stats.get(entity_id, []) if r.get("sum") is not None]
@@ -227,14 +239,18 @@ class WattsCoordinator(DataUpdateCoordinator[dict[str, Summary]]):
             name=None,
             source="recorder",
             statistic_id=entity_id,
-            unit_of_measurement=UnitOfVolume.CUBIC_METERS,
+            unit_of_measurement=unit,
             unit_class="volume",
             **_MEAN,
         )
+        convert = VolumeConverter.converter_factory(UnitOfVolume.CUBIC_METERS, unit)
         async_import_statistics(
             self.hass,
             metadata,
-            [StatisticData(start=start, state=total, sum=total) for start, total in plan.rows],
+            [
+                StatisticData(start=start, state=convert(total), sum=convert(total))
+                for start, total in plan.rows
+            ],
         )
         _LOGGER.info(
             "Repaired statistics of %s: %s hourly rows, recorder series from %s moved by %s",
@@ -253,7 +269,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Entities exist now, so the sensor's statistic_id can be looked up.
     if any([await coordinator.async_repair_entity_statistics(d) for d in coordinator.device_ids]):
         await coordinator._store.async_save(coordinator._state)
+    await _async_check_energy_sources(hass)
     return True
+
+
+def _mentions(data: Any, prefix: str) -> bool:
+    if isinstance(data, str):
+        return data.startswith(prefix)
+    if isinstance(data, dict):
+        return any(_mentions(v, prefix) for v in data.values())
+    if isinstance(data, list):
+        return any(_mentions(v, prefix) for v in data)
+    return False
+
+
+async def _async_check_energy_sources(hass: HomeAssistant) -> None:
+    """Raise a repair issue if the Energy dashboard uses the pre-0.5.0 statistic id.
+
+    Before 0.5.0 this integration wrote novafos_water:water_consumption, which
+    stopped updating. If the older Novafos integration (domain novafos_water) is
+    set up, that id is its own and still live, so nothing is flagged.
+    """
+    legacy = f"{LEGACY_STATISTICS_SOURCE}:water_consumption"
+    stale = False
+    if (
+        "energy" in hass.config.components
+        and not hass.config_entries.async_entries(LEGACY_STATISTICS_SOURCE)
+    ):
+        from homeassistant.components.energy.data import async_get_manager
+
+        stale = _mentions((await async_get_manager(hass)).data, legacy)
+    if not stale:
+        ir.async_delete_issue(hass, DOMAIN, "legacy_statistic_id")
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        "legacy_statistic_id",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="legacy_statistic_id",
+        translation_placeholders={"old": legacy, "new": f"{STATISTICS_SOURCE}:water_consumption"},
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

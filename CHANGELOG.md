@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+- The one-time statistics repair from 0.5.0 now also works when the consumption sensor's unit was changed in its entity settings (for example to litres): it reads and writes the statistics in the unit they are stored in. In 0.5.0 that case wrote m³ values into a litre statistic.
+- New repair issue (Settings > System > Repairs) when the Energy dashboard still uses `novafos_water:water_consumption`, which this integration stopped updating in 0.5.0. It is not raised if the older Novafos integration (domain `novafos_water`) is set up, since that id is then its own.
+
 ## 0.5.0
 - Fix `sensor.novafos_water_consumption` statistics going negative. 0.3.0-0.4.1 imported the hourly history into the sensor's own statistics while the recorder compiled the same statistic from the sensor's state; the recorder started its own series at 0 underneath the imported sums. The integration no longer writes the sensor's statistics: the recorder owns them, and the hour-by-hour history lives only in the external statistic.
 - One-time repair on the first start after upgrading: the sensor's statistics are rebased so every hour's sum equals the running total and the recorder continues from there. If the recorder never compiled the sensor, the imported rows are removed instead.

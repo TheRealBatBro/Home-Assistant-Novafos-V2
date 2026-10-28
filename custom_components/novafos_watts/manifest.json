@@ -1,13 +1,20 @@
 {
   "domain": "novafos_watts",
   "name": "Novafos water (Watts On)",
-  "codeowners": ["@TheRealBatBro"],
+  "after_dependencies": [
+    "energy"
+  ],
+  "codeowners": [
+    "@TheRealBatBro"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/TheRealBatBro/Home-Assistant-Novafos-V2",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/TheRealBatBro/Home-Assistant-Novafos-V2/issues",
   "requirements": [],
-  "version": "0.5.0"
+  "version": "0.5.1"
 }
