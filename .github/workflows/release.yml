@@ -1,0 +1,43 @@
+name: Release
+
+# HACS lists versions from GitHub Releases, not plain tags.
+# Pushing a tag like v0.2.2 creates the matching release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish as a release (e.g. v0.2.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Tag must match the manifest version
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('custom_components/novafos_watts/manifest.json'))['version'])")
+          if [ "v$version" != "$TAG" ]; then
+            echo "Tag $TAG does not match manifest version $version"
+            exit 1
+          fi
+
+      - name: Create release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
