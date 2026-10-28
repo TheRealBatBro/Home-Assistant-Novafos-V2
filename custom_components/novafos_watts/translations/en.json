@@ -9,15 +9,24 @@
           "device_ids": "Water device IDs (optional, comma separated)",
           "unit": "Unit the API reports"
         }
+      },
+      "reauth_confirm": {
+        "title": "Log in to Watts again",
+        "description": "The saved Watts login no longer works. Run `python tools/login.py login`, then paste the new refresh token here.",
+        "data": {
+          "refresh_token": "Refresh token"
+        }
       }
     },
     "error": {
       "invalid_auth": "Refresh token rejected, log in again with tools/login.py",
       "cannot_connect": "Could not reach the Watts backend",
-      "no_devices": "No water meter found. Enter the device ID manually."
+      "no_devices": "No water meter found. Enter the device ID manually.",
+      "wrong_account": "This token belongs to a different Watts account than the one configured"
     },
     "abort": {
-      "already_configured": "This Watts account is already configured"
+      "already_configured": "This Watts account is already configured",
+      "reauth_successful": "Logged in again. The integration is reloading."
     }
   }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+- Add a re-authentication screen: when the saved login stops working, Home Assistant now offers a form to paste a new refresh token (it checks it is the same Watts account) instead of leaving the integration broken.
+- A 401 from the API now triggers one retry with a freshly refreshed access token; only a second 401 counts as a login failure.
+
 ## 0.4.0
 - `sensor.novafos_water_consumption` now has `daily` (last 30 local days) and `hourly` (last 48 hours) attributes in m³, for templates and cards. They are excluded from the recorder database.
 

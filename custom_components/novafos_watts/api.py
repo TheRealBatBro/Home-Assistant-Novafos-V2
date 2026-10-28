@@ -78,24 +78,36 @@ class WattsApi:
                     await self._on_new_refresh_token(new_refresh)
             return self._access_token
 
+    @property
+    def refresh_token(self) -> str:
+        """The newest refresh token (it rotates on every refresh)."""
+        return self._refresh_token
+
     async def get(self, path: str, params: dict[str, str] | None = None) -> Any:
-        token = await self._ensure_token()
-        try:
-            async with self._session.get(
-                API_BASE + path.lstrip("/"),
-                params=params,
-                headers={"Authorization": f"Bearer {token}"},
-            ) as resp:
-                if resp.status == 401:
-                    self._access_token = None
-                    raise WattsAuthError("API rejected access token")
-                if resp.status == 204:
-                    return []
-                if resp.status >= 400:
-                    raise WattsApiError(f"{path} -> {resp.status}")
-                return await resp.json(content_type=None)
-        except aiohttp.ClientError as err:
-            raise WattsApiError(str(err)) from err
+        # A 401 can mean the access token was revoked before it expired, so drop it,
+        # get a fresh one from the refresh token and retry once. Only a second 401,
+        # or the token endpoint refusing the refresh token, counts as a login failure.
+        for attempt in (1, 2):
+            token = await self._ensure_token()
+            try:
+                async with self._session.get(
+                    API_BASE + path.lstrip("/"),
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as resp:
+                    if resp.status == 401:
+                        self._access_token = None
+                        if attempt == 1:
+                            continue
+                        raise WattsAuthError("API rejected a freshly issued access token")
+                    if resp.status == 204:
+                        return []
+                    if resp.status >= 400:
+                        raise WattsApiError(f"{path} -> {resp.status}")
+                    return await resp.json(content_type=None)
+            except aiohttp.ClientError as err:
+                raise WattsApiError(str(err)) from err
+        raise WattsAuthError("unreachable")  # loop always returns or raises
 
     async def async_user_id(self) -> str:
         """Backend user id; it is not the token's sub/oid, so ask the API."""
