@@ -1,0 +1,12 @@
+{
+  "domain": "novafos_watts",
+  "name": "Novafos water (Watts On)",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://watts.dk",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://watts.dk",
+  "requirements": [],
+  "version": "0.1.0"
+}

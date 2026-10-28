@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Novafos water (Watts On)",
+        "description": "Run tools/login.py to get a refresh token, then paste it here. Leave device IDs empty to auto-detect water meters.",
+        "data": {
+          "refresh_token": "Refresh token",
+          "device_ids": "Water device IDs (optional, comma separated)",
+          "unit": "Unit the API reports"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Refresh token rejected, log in again with tools/login.py",
+      "cannot_connect": "Could not reach the Watts backend",
+      "no_devices": "No water meter found. Enter the device ID manually."
+    },
+    "abort": {
+      "already_configured": "This Watts account is already configured"
+    }
+  }
+}
