@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.3
+- `hacs.json` marks the integration as Denmark-only (`"country": ["DK"]`), as HACS and the Home Assistant Marketplace ask for integrations limited to certain countries. No code changes.
+
 ## 0.5.2
 - Ready for the HACS default list: MIT license, HACS and hassfest validation on every push, README explains installing through HACS. No code changes.
 

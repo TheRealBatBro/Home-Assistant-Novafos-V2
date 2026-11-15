@@ -1,4 +1,7 @@
 {
   "name": "Novafos water (Watts On)",
-  "render_readme": true
+  "render_readme": true,
+  "country": [
+    "DK"
+  ]
 }
