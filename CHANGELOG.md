@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.2
+- Ready for the HACS default list: MIT license, HACS and hassfest validation on every push, README explains installing through HACS. No code changes.
+
 ## 0.5.1
 - The one-time statistics repair from 0.5.0 now also works when the consumption sensor's unit was changed in its entity settings (for example to litres): it reads and writes the statistics in the unit they are stored in. In 0.5.0 that case wrote m³ values into a litre statistic.
 - New repair issue (Settings > System > Repairs) when the Energy dashboard still uses `novafos_water:water_consumption`, which this integration stopped updating in 0.5.0. It is not raised if the older Novafos integration (domain `novafos_water`) is set up, since that id is then its own.
