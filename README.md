@@ -4,13 +4,18 @@ Reads Novafos water consumption through the Watts On backend. Watts holds the
 Novafos link (customer number + meter number) server-side, so Home Assistant
 only needs a Watts login. No MitID is needed after the first login.
 
-Built from static analysis of the Watts On Android app. The endpoints and the
-token flow are **not yet verified against the live API** (see "Verify first").
+This is an unofficial integration, not made or supported by Novafos or Watts.
+It uses the same API as the Watts On app, so it can break if Watts changes it.
 
 ## Install
 
-1. Copy `custom_components/novafos_watts` into your Home Assistant `config/custom_components/`.
-2. Restart Home Assistant.
+With [HACS](https://hacs.xyz): search for "Novafos water (Watts On)", download
+it and restart Home Assistant. (If it isn't listed yet: HACS > ⋮ > Custom
+repositories, add `https://github.com/TheRealBatBro/Home-Assistant-Novafos-V2`
+as an Integration.)
+
+Manually: copy `custom_components/novafos_watts` into your Home Assistant
+`config/custom_components/` and restart Home Assistant.
 
 ## Get a refresh token
 
@@ -23,14 +28,14 @@ python tools/login.py login
 Open the printed URL, sign in, and copy the address of the final failed
 `msauth://` redirect back into the prompt. Copy the refresh token it prints.
 
-## Verify first
+## Check your account (optional)
 
 ```bash
 python tools/login.py probe
 ```
 
 This reuses the saved token and prints your water meter and the raw consumption
-JSON. Confirmed against a real account: the API returns hourly intervals with
+JSON. The API returns hourly intervals with
 short field names (`sd`, `ed`, `vol`, `mq`), and `vol` is in **m³** even though
 the device metadata says "liter". The `/recent` endpoint takes `?newerThan=`.
 
