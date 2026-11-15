@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.4
+- First release after all HACS and hassfest checks pass (repository topics added), for the HACS default list / Home Assistant Marketplace submission. No code changes.
+
 ## 0.5.3
 - `hacs.json` marks the integration as Denmark-only (`"country": ["DK"]`), as HACS and the Home Assistant Marketplace ask for integrations limited to certain countries. No code changes.
 
